@@ -26,6 +26,54 @@ jobs:
           cp -r remote_app/lib remote_build/lib
           cp remote_app/pubspec.yaml remote_build/pubspec.yaml
           sed -i 's/Colors.white46/Color(0x75FFFFFF)/g' remote_build/lib/main.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('remote_build/lib/main.dart')
+          s = p.read_text()
+          old = '''  void key(int code) {
+    if (!tvConnected) {
+      _reconnectNow();
+      _toast('TV’ye yeniden bağlanıyor');
+      return;
+    }
+    HapticFeedback.selectionClick();
+    remote.send(code);
+  }
+'''
+          new = '''  void key(int code) {
+    if (code == 26) {
+      _tvPowerIr();
+      return;
+    }
+    if (!tvConnected) {
+      _reconnectNow();
+      _toast('TV’ye yeniden bağlanıyor');
+      return;
+    }
+    HapticFeedback.selectionClick();
+    remote.send(code);
+  }
+
+  Future<void> _tvPowerIr() async {
+    HapticFeedback.mediumImpact();
+    try {
+      final ok = await ir.invokeMethod<bool>('sendTvPower') ?? false;
+      if (!ok) {
+        if (tvConnected) {
+          remote.send(26);
+        } else {
+          _toast('TV IR gönderilemedi');
+        }
+      }
+    } catch (_) {
+      if (tvConnected) remote.send(26);
+    }
+  }
+'''
+          if old not in s:
+              raise SystemExit('key() patch target not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
           cp remote_app/android_patch/MainActivity.kt remote_build/android/app/src/main/kotlin/com/example/remote_app/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
