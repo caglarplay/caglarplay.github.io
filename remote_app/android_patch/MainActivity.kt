@@ -8,6 +8,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
     private val channelName = "kumanda/ir"
+    private var rc5Toggle = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -15,6 +16,21 @@ class MainActivity: FlutterActivity() {
             val ir = getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
             when (call.method) {
                 "hasIr" -> result.success(ir?.hasIrEmitter() == true)
+                "sendTvPower" -> {
+                    if (ir?.hasIrEmitter() != true) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        // Vestel RC5118 family: RC5, TV1 address 1, power command 0x0C.
+                        val pattern = rc5Pattern(address = 1, command = 0x0C, toggle = rc5Toggle)
+                        ir.transmit(36000, pattern)
+                        rc5Toggle = !rc5Toggle
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("IR_TV", e.message, null)
+                    }
+                }
                 "sendAc" -> {
                     if (ir?.hasIrEmitter() != true) { result.success(false); return@setMethodCallHandler }
                     try {
@@ -31,6 +47,49 @@ class MainActivity: FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun rc5Pattern(address: Int, command: Int, toggle: Boolean): IntArray {
+        // RC5: 36 kHz, Manchester coding, 889 us per half bit.
+        // Logic 1 = space,mark. Logic 0 = mark,space.
+        val bits = ArrayList<Int>(14)
+        bits.add(1) // start
+        bits.add(if (command < 64) 1 else 0) // field bit
+        bits.add(if (toggle) 1 else 0)
+        for (i in 4 downTo 0) bits.add((address shr i) and 1)
+        val cmd = command and 0x3F
+        for (i in 5 downTo 0) bits.add((cmd shr i) and 1)
+
+        val halves = ArrayList<Boolean>(bits.size * 2)
+        for (bit in bits) {
+            if (bit == 1) {
+                halves.add(false) // space
+                halves.add(true)  // mark
+            } else {
+                halves.add(true)  // mark
+                halves.add(false) // space
+            }
+        }
+
+        // ConsumerIrManager pattern must begin with a mark. Leading idle space is implicit.
+        while (halves.isNotEmpty() && !halves[0]) halves.removeAt(0)
+        if (halves.isEmpty()) return intArrayOf(889, 889)
+
+        val out = ArrayList<Int>()
+        var state = halves[0]
+        var count = 1
+        for (i in 1 until halves.size) {
+            if (halves[i] == state) {
+                count++
+            } else {
+                out.add(count * 889)
+                state = halves[i]
+                count = 1
+            }
+        }
+        out.add(count * 889)
+        if (out.size % 2 == 1) out.add(889) // finish with a space
+        return out.toIntArray()
     }
 
     private fun auxPattern(power:Boolean, tempIn:Int, modeIn:Int, fanIn:Int, swing:Boolean):IntArray {
