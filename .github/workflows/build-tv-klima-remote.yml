@@ -5,6 +5,7 @@ on:
     branches: [tv-klima-kumanda]
     paths:
       - 'remote_app/**'
+      - 'tv_mouse_helper/**'
       - '.github/workflows/build-tv-klima-remote.yml'
   workflow_dispatch:
 
@@ -17,7 +18,8 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Create Android shell
+
+      - name: Create phone app shell
         run: |
           flutter create --platforms=android --org com.example --project-name remote_app remote_build
           rm -rf remote_build/lib
@@ -33,17 +35,39 @@ jobs:
           s=s.replace(marker,perms)
           p.write_text(s)
           PY
-      - name: Build APK
+
+      - name: Build phone APK
         working-directory: remote_build
         run: |
           flutter pub get
           flutter build apk --release
-      - name: Collect APK
+
+      - name: Create TV mouse helper shell
+        run: |
+          flutter create --platforms=android --org com.caglarplay --project-name tv_mouse_helper tv_mouse_build
+          rm -rf tv_mouse_build/lib
+          cp -r tv_mouse_helper/lib tv_mouse_build/lib
+          cp tv_mouse_helper/pubspec.yaml tv_mouse_build/pubspec.yaml
+          cp tv_mouse_helper/android_patch/MainActivity.kt tv_mouse_build/android/app/src/main/kotlin/com/caglarplay/tv_mouse_helper/MainActivity.kt
+          cp tv_mouse_helper/android_patch/MouseAccessibilityService.kt tv_mouse_build/android/app/src/main/kotlin/com/caglarplay/tv_mouse_helper/MouseAccessibilityService.kt
+          mkdir -p tv_mouse_build/android/app/src/main/res/xml
+          cp tv_mouse_helper/android_patch/mouse_accessibility_service.xml tv_mouse_build/android/app/src/main/res/xml/mouse_accessibility_service.xml
+          cp tv_mouse_helper/android_patch/AndroidManifest.xml tv_mouse_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Build TV helper APK
+        working-directory: tv_mouse_build
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Collect APKs
         run: |
           mkdir -p out
           cp remote_build/build/app/outputs/flutter-apk/app-release.apk out/Kumanda.apk
+          cp tv_mouse_build/build/app/outputs/flutter-apk/app-release.apk out/TV-Mouse-Yardimcisi.apk
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Kumanda-APK
-          path: out/Kumanda.apk
+          name: Kumanda-Paketi
+          path: out/*.apk
           retention-days: 14
