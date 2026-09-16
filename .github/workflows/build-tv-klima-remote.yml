@@ -1,0 +1,49 @@
+name: Build TV Klima Kumanda
+
+on:
+  push:
+    branches: [tv-klima-kumanda]
+    paths:
+      - 'remote_app/**'
+      - '.github/workflows/build-tv-klima-remote.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create Android shell
+        run: |
+          flutter create --platforms=android --org com.example --project-name remote_app remote_build
+          rm -rf remote_build/lib
+          cp -r remote_app/lib remote_build/lib
+          cp remote_app/pubspec.yaml remote_build/pubspec.yaml
+          cp remote_app/android_patch/MainActivity.kt remote_build/android/app/src/main/kotlin/com/example/remote_app/MainActivity.kt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('remote_build/android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          marker='<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          perms='''<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.TRANSMIT_IR"/>\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-feature android:name="android.hardware.consumerir" android:required="false"/>'''
+          s=s.replace(marker,perms)
+          p.write_text(s)
+          PY
+      - name: Build APK
+        working-directory: remote_build
+        run: |
+          flutter pub get
+          flutter build apk --release
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp remote_build/build/app/outputs/flutter-apk/app-release.apk out/Kumanda.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kumanda-APK
+          path: out/Kumanda.apk
+          retention-days: 14

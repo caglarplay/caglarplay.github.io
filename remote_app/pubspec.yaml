@@ -1,0 +1,22 @@
+name: remote_app
+description: Vestel Android TV + Baymak IR remote
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  bonsoir: ^6.0.1
+  flutter_secure_storage: ^10.0.0
+  crypto: ^3.0.7
+  basic_utils: ^5.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
