@@ -25,6 +25,7 @@ jobs:
           rm -rf remote_build/lib
           cp -r remote_app/lib remote_build/lib
           cp remote_app/pubspec.yaml remote_build/pubspec.yaml
+          sed -i 's/Colors.white46/Color(0x75FFFFFF)/g' remote_build/lib/main.dart
           cp remote_app/android_patch/MainActivity.kt remote_build/android/app/src/main/kotlin/com/example/remote_app/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
