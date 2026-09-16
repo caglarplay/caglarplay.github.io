@@ -78,7 +78,15 @@ class TVSecurityManager {
   void cancel()=>_clean();
   void _clean(){_sub?.cancel();_sub=null;_socket?.destroy();_socket=null;_serverDer=null;_buffer.clear();}
 
-  static RSAPublicKey? _rsaFromPem(String pem){try{final d=X509Utils.x509CertificateFromPem(pem);final h=d.tbsCertificate!.subjectPublicKeyInfo.bytes;final bytes=Uint8List.fromList(List.generate(h.length~/2,(i)=>int.parse(h.substring(i*2,i*2+2),radix:16)));return CryptoUtils.rsaPublicKeyFromDERBytes(bytes);}catch(_){return null;}}
+  static RSAPublicKey? _rsaFromPem(String pem){
+    try{
+      final d=X509Utils.x509CertificateFromPem(pem);
+      final h=d.tbsCertificate!.subjectPublicKeyInfo.bytes;
+      if(h==null) return null;
+      final bytes=Uint8List.fromList(List.generate(h.length~/2,(i)=>int.parse(h.substring(i*2,i*2+2),radix:16)));
+      return CryptoUtils.rsaPublicKeyFromDERBytes(bytes);
+    }catch(_){return null;}
+  }
   static RSAPublicKey? _rsaFromDer(Uint8List der){final b64=base64.encode(der);return _rsaFromPem('-----BEGIN CERTIFICATE-----\n$b64\n-----END CERTIFICATE-----');}
   static List<int> _big(BigInt v,[int? size]){var h=v.toRadixString(16);if(h.length.isOdd)h='0$h';if(size!=null)while(h.length<size*2)h='00$h';return List.generate(h.length~/2,(i)=>int.parse(h.substring(i*2,i*2+2),radix:16));}
 }
