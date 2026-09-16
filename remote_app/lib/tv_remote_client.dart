@@ -5,19 +5,118 @@ import 'certificate_manager.dart';
 import 'remote_protocol.dart';
 
 class TVRemoteClient {
-  TVRemoteClient(this.certManager,{this.onDisconnected});
+  TVRemoteClient(this.certManager, {this.onDisconnected});
+
   final CertificateManager certManager;
   final void Function()? onDisconnected;
-  SecureSocket? _socket; StreamSubscription? _sub; final _buffer=<int>[]; bool connected=false;
+
+  SecureSocket? _socket;
+  StreamSubscription? _sub;
+  final _buffer = <int>[];
+  bool connected = false;
+  bool _connecting = false;
+  String? currentIp;
+
   Future<bool> connect(String ip) async {
-    try{
-      final ctx=await certManager.buildSecurityContext();
-      _socket=await SecureSocket.connect(ip,6466,context:ctx,onBadCertificate:(_)=>true,timeout:const Duration(seconds:8));
-      connected=true; _sub=_socket!.listen(_onData,onDone:_drop,onError:(_)=>_drop()); return true;
-    }catch(_){_drop();return false;}
+    if (_connecting) return false;
+    if (connected && currentIp == ip) return true;
+
+    _connecting = true;
+    await _close(notify: false);
+
+    try {
+      final ctx = await certManager.buildSecurityContext();
+      final socket = await SecureSocket.connect(
+        ip,
+        6466,
+        context: ctx,
+        onBadCertificate: (_) => true,
+        timeout: const Duration(seconds: 5),
+      );
+
+      _socket = socket;
+      currentIp = ip;
+      connected = true;
+      _buffer.clear();
+      _sub = socket.listen(
+        _onData,
+        onDone: () => _close(notify: true),
+        onError: (_) => _close(notify: true),
+        cancelOnError: true,
+      );
+      return true;
+    } catch (_) {
+      await _close(notify: false);
+      return false;
+    } finally {
+      _connecting = false;
+    }
   }
-  void send(int code){if(!connected)return;_socket!.add(RemoteMessage.buildKeyInject(code,RemoteDirection.short));}
-  void _onData(List<int> d){_buffer.addAll(d);while(_buffer.isNotEmpty){int len=0,s=0,n=0;bool done=false;for(int i=0;i<_buffer.length&&i<5;i++){final b=_buffer[i];len|=(b&0x7f)<<s;s+=7;n++;if((b&0x80)==0){done=true;break;}}if(!done||_buffer.length<n+len)return;final msg=Uint8List.fromList(_buffer.sublist(n,n+len));_buffer.removeRange(0,n+len);final inc=RemoteMessage.parse(msg);if(inc.field==1)_socket!.add(RemoteMessage.buildConfigure());else if(inc.field==2)_socket!.add(RemoteMessage.buildSetActive());else if(inc.field==8)_socket!.add(RemoteMessage.buildPingResponse(inc.pingVal));}}
-  void _drop(){final was=connected;connected=false;_sub?.cancel();_sub=null;_socket?.destroy();_socket=null;if(was)onDisconnected?.call();}
-  void dispose()=>_drop();
+
+  void send(int code) {
+    if (!connected || _socket == null) return;
+    try {
+      _socket!.add(RemoteMessage.buildKeyInject(code, RemoteDirection.short));
+    } catch (_) {
+      _close(notify: true);
+    }
+  }
+
+  void _onData(List<int> data) {
+    _buffer.addAll(data);
+    while (_buffer.isNotEmpty) {
+      int len = 0, shift = 0, prefix = 0;
+      bool complete = false;
+
+      for (int i = 0; i < _buffer.length && i < 5; i++) {
+        final b = _buffer[i];
+        len |= (b & 0x7f) << shift;
+        shift += 7;
+        prefix++;
+        if ((b & 0x80) == 0) {
+          complete = true;
+          break;
+        }
+      }
+
+      if (!complete || _buffer.length < prefix + len) return;
+
+      final msg = Uint8List.fromList(_buffer.sublist(prefix, prefix + len));
+      _buffer.removeRange(0, prefix + len);
+      final incoming = RemoteMessage.parse(msg);
+
+      try {
+        if (incoming.field == 1) {
+          _socket?.add(RemoteMessage.buildConfigure());
+        } else if (incoming.field == 2) {
+          _socket?.add(RemoteMessage.buildSetActive());
+        } else if (incoming.field == 8) {
+          _socket?.add(RemoteMessage.buildPingResponse(incoming.pingVal));
+        }
+      } catch (_) {
+        _close(notify: true);
+      }
+    }
+  }
+
+  Future<void> _close({required bool notify}) async {
+    final wasConnected = connected;
+    connected = false;
+    currentIp = null;
+    _buffer.clear();
+
+    final sub = _sub;
+    _sub = null;
+    await sub?.cancel();
+
+    final socket = _socket;
+    _socket = null;
+    socket?.destroy();
+
+    if (notify && wasConnected) onDisconnected?.call();
+  }
+
+  void dispose() {
+    _close(notify: false);
+  }
 }
