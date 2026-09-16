@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/material.dart';
@@ -17,22 +18,19 @@ class KumandaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF7C5CFC);
+    const accent = Color(0xFF8B73FF);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Kumanda',
       theme: ThemeData(
         brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark),
-        scaffoldBackgroundColor: const Color(0xFF0B0C10),
-        useMaterial3: true,
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFF17191F),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: seed.withOpacity(.7))),
+        scaffoldBackgroundColor: const Color(0xFF090A0E),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: accent,
+          brightness: Brightness.dark,
+          surface: const Color(0xFF121319),
         ),
+        useMaterial3: true,
       ),
       home: const HomePage(),
     );
@@ -55,21 +53,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final discovery = TVDiscoveryService();
   late final TVSecurityManager security;
   late final TVRemoteClient remote;
+
   StreamSubscription? discoverySub;
   Timer? reconnectTimer;
-
   List<BonsoirService> tvs = [];
+
   bool scanning = true;
-  bool tvConnected = false;
-  bool irOk = false;
   bool busy = false;
+  bool tvConnected = false;
   bool reconnecting = false;
   bool keepConnected = true;
-  String status = 'TV aranıyor…';
+  bool irOk = false;
   String? tvIp;
+  String status = 'TV aranıyor…';
 
   int tab = 0;
-  int tvMode = 0;
   int temp = 24;
   int fan = 0;
   int mode = 1;
@@ -77,16 +75,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool swing = false;
 
   final ipCtrl = TextEditingController();
-  final textCtrl = TextEditingController();
-  double dragX = 0;
-  double dragY = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     security = TVSecurityManager(cert);
-    remote = TVRemoteClient(cert, onDisconnected: _onTvDisconnected);
+    remote = TVRemoteClient(cert, onDisconnected: _onDisconnected);
     _init();
   }
 
@@ -98,11 +93,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
 
     await cert.ensureReady();
-
-    final savedIp = await storage.read(key: lastTvKey);
-    if (savedIp != null && savedIp.isNotEmpty && await security.isPaired(savedIp)) {
-      tvIp = savedIp;
-      ipCtrl.text = savedIp;
+    final saved = await storage.read(key: lastTvKey);
+    if (saved != null && saved.isNotEmpty && await security.isPaired(saved)) {
+      tvIp = saved;
+      ipCtrl.text = saved;
       await _reconnectNow(showStatus: false);
     }
 
@@ -111,7 +105,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         tvs = items;
         scanning = false;
-        if (!tvConnected && !reconnecting) {
+        if (!tvConnected && !reconnecting && tvIp == null) {
           status = items.isEmpty ? 'TV bulunamadı' : 'TV seç';
         }
       });
@@ -127,7 +121,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         });
       }
     }
-
     if (mounted) setState(() {});
   }
 
@@ -147,22 +140,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     remote.dispose();
     security.cancel();
     ipCtrl.dispose();
-    textCtrl.dispose();
     super.dispose();
   }
 
-  void note(String text) {
+  void _toast(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 1300),
+        content: Text(text),
+      ),
     );
   }
 
-  void _onTvDisconnected() {
+  void _onDisconnected() {
     if (!mounted) return;
     setState(() {
       tvConnected = false;
-      status = keepConnected ? 'Bağlantı düştü • geri bağlanıyor…' : 'Bağlantı kapalı';
+      status = 'Bağlantı yenileniyor…';
     });
     _scheduleReconnect();
   }
@@ -171,28 +167,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     reconnectTimer?.cancel();
     if (!keepConnected || tvIp == null) return;
     reconnectTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!tvConnected && !reconnecting) _reconnectNow();
+      if (!tvConnected && !reconnecting) _reconnectNow(showStatus: false);
     });
   }
 
   Future<void> _reconnectNow({bool showStatus = true}) async {
     final ip = tvIp;
     if (ip == null || ip.isEmpty || reconnecting || tvConnected) return;
-
     reconnecting = true;
-    if (mounted && showStatus) {
-      setState(() => status = 'TV’ye bağlanıyor…');
-    }
-
+    if (mounted && showStatus) setState(() => status = 'TV’ye bağlanıyor…');
     final ok = await remote.connect(ip);
     reconnecting = false;
-
     if (!mounted) return;
     setState(() {
       tvConnected = ok;
-      status = ok ? 'Bağlı' : 'Tekrar bağlanıyor…';
+      status = ok ? 'Bağlı' : 'Tekrar deneniyor…';
     });
-
     if (ok) {
       reconnectTimer?.cancel();
     } else {
@@ -200,15 +190,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> connectIp(String ip) async {
-    ip = ip.trim();
+  Future<void> connectIp(String rawIp) async {
+    final ip = rawIp.trim();
     if (ip.isEmpty) return;
 
     keepConnected = true;
     reconnectTimer?.cancel();
     tvIp = ip;
     ipCtrl.text = ip;
-
     setState(() {
       busy = true;
       status = 'Bağlanıyor…';
@@ -230,34 +219,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     final error = await security.begin(ip);
     if (error != null) {
-      if (mounted) {
-        setState(() {
-          busy = false;
-          status = 'Eşleştirme olmadı';
-        });
-      }
-      note(error);
+      if (mounted) setState(() { busy = false; status = 'Eşleştirme olmadı'; });
+      _toast(error);
       return;
     }
 
     if (!mounted) return;
     setState(() => busy = false);
-
-    final pinCtrl = TextEditingController();
+    final pinController = TextEditingController();
     final pin = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('TV’deki kodu gir'),
         content: TextField(
-          controller: pinCtrl,
+          controller: pinController,
           autofocus: true,
-          textCapitalization: TextCapitalization.characters,
           maxLength: 6,
+          textCapitalization: TextCapitalization.characters,
           decoration: const InputDecoration(hintText: 'A1B2C3'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('İptal')),
-          FilledButton(onPressed: () => Navigator.pop(context, pinCtrl.text), child: const Text('Eşleştir')),
+          FilledButton(onPressed: () => Navigator.pop(context, pinController.text), child: const Text('Eşleştir')),
         ],
       ),
     );
@@ -270,13 +253,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     setState(() => busy = true);
     final paired = await security.submitPin(ip, pin);
     if (!paired) {
-      if (mounted) {
-        setState(() {
-          busy = false;
-          status = 'Kod kabul edilmedi';
-        });
-      }
-      note('Kod yanlış veya TV cevap vermedi');
+      if (mounted) setState(() { busy = false; status = 'Kod kabul edilmedi'; });
+      _toast('Kod yanlış veya TV cevap vermedi');
       return;
     }
 
@@ -295,14 +273,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void key(int code) {
     if (!tvConnected) {
       _reconnectNow();
-      note('TV’ye yeniden bağlanıyor');
+      _toast('TV’ye yeniden bağlanıyor');
       return;
     }
     HapticFeedback.selectionClick();
     remote.send(code);
   }
 
-  int? keyForChar(String ch) {
+  int? _keyForChar(String ch) {
     final c = ch.toLowerCase();
     if (c.isEmpty) return null;
     final n = c.codeUnitAt(0);
@@ -313,13 +291,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return null;
   }
 
-  Future<void> sendText() async {
+  Future<void> _showKeyboard() async {
     if (!tvConnected) {
       _reconnectNow();
       return;
     }
-    for (final rune in textCtrl.text.runes) {
-      final code = keyForChar(String.fromCharCode(rune));
+    final controller = TextEditingController();
+    final text = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF15171E),
+      builder: (context) => Padding(
+        padding: EdgeInsets.fromLTRB(18, 18, 18, MediaQuery.of(context).viewInsets.bottom + 18),
+        child: SafeArea(
+          top: false,
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (value) => Navigator.pop(context, value),
+                  decoration: InputDecoration(
+                    hintText: 'TV’ye yaz…',
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(.06),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                onPressed: () => Navigator.pop(context, controller.text),
+                icon: const Icon(Icons.send_rounded),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (text == null || text.isEmpty) return;
+    for (final rune in text.runes) {
+      final code = _keyForChar(String.fromCharCode(rune));
       if (code != null) {
         remote.send(code);
         await Future.delayed(const Duration(milliseconds: 45));
@@ -327,27 +341,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _sendSwipe() async {
-    final x = dragX;
-    final y = dragY;
-    dragX = 0;
-    dragY = 0;
-
-    final distance = x.abs() > y.abs() ? x.abs() : y.abs();
-    if (distance < 22) return;
-
-    int steps = (distance / 70).ceil();
-    if (steps < 1) steps = 1;
-    if (steps > 4) steps = 4;
-
-    final code = x.abs() > y.abs()
-        ? (x > 0 ? 22 : 21)
-        : (y > 0 ? 20 : 19);
-
-    for (int i = 0; i < steps; i++) {
-      key(code);
-      await Future.delayed(const Duration(milliseconds: 55));
+  void _openTouchpad() {
+    final ip = tvIp;
+    if (ip == null) {
+      _toast('Önce TV’ye bağlan');
+      return;
     }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TouchpadPage(
+          tvIp: ip,
+          sendKey: key,
+          showKeyboard: _showKeyboard,
+        ),
+      ),
+    );
   }
 
   Future<void> acSend() async {
@@ -360,9 +368,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             'swing': swing,
           }) ??
           false;
-      if (!ok) note('IR gönderilemedi');
+      if (!ok) _toast('IR gönderilemedi');
     } catch (_) {
-      note('IR hatası');
+      _toast('IR hatası');
     }
   }
 
@@ -384,11 +392,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
       ),
       bottomNavigationBar: NavigationBar(
-        height: 72,
+        height: 70,
         selectedIndex: tab,
         onDestinationSelected: (value) => setState(() => tab = value),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.tv_rounded), selectedIcon: Icon(Icons.tv), label: 'TV'),
+          NavigationDestination(icon: Icon(Icons.tv_rounded), label: 'TV'),
           NavigationDestination(icon: Icon(Icons.ac_unit_rounded), label: 'Klima'),
         ],
       ),
@@ -396,106 +404,256 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _header() {
+    final online = tab == 0 ? tvConnected : irOk;
+    final text = tab == 0
+        ? (tvConnected ? 'Bağlı' : reconnecting ? 'Bağlanıyor' : 'Çevrimdışı')
+        : (irOk ? 'IR hazır' : 'IR yok');
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 8),
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xFF8B73FF).withOpacity(.16),
+              borderRadius: BorderRadius.circular(15),
             ),
-            child: const Icon(Icons.settings_remote_rounded),
+            child: const Icon(Icons.settings_remote_rounded, color: Color(0xFFB7A9FF)),
           ),
           const SizedBox(width: 12),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Kumanda', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700)),
-                Text('Vestel TV + Baymak Klima', style: TextStyle(fontSize: 12, color: Colors.white54)),
+                Text('Kumanda', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
+                Text('Vestel TV  •  Baymak Klima', style: TextStyle(fontSize: 12, color: Colors.white54)),
               ],
             ),
           ),
-          if (tab == 0)
-            _statusPill(
-              tvConnected ? 'Bağlı' : (reconnecting ? 'Bağlanıyor' : 'Çevrimdışı'),
-              tvConnected ? Icons.check_circle_rounded : Icons.sync_rounded,
-              tvConnected,
-            )
-          else
-            _statusPill(irOk ? 'IR hazır' : 'IR yok', Icons.sensors_rounded, irOk),
-        ],
-      ),
-    );
-  }
-
-  Widget _statusPill(String text, IconData icon, bool active) {
-    final color = active ? const Color(0xFF62D394) : Colors.white54;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(.055),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withOpacity(.08)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 15, color: color),
-          const SizedBox(width: 6),
-          Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(.05),
+              borderRadius: BorderRadius.circular(50),
+              border: Border.all(color: Colors.white.withOpacity(.07)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: online ? const Color(0xFF63D49A) : Colors.white38,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _tvPage() {
-    if (!tvConnected && tvIp == null) return _connectPage();
-    if (!tvConnected && busy) return _connectPage();
+    if (tvIp == null && !tvConnected) return _connectPage();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Column(
+        children: [
+          if (!tvConnected)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF8B73FF).withOpacity(.10),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(status, style: const TextStyle(fontSize: 12))),
+                ],
+              ),
+            ),
+          _topActions(),
+          const SizedBox(height: 12),
+          Expanded(child: Center(child: _dpad())),
+          const SizedBox(height: 10),
+          _rockerRow(),
+          const SizedBox(height: 10),
+          _bottomActions(),
+        ],
+      ),
+    );
+  }
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 22),
+  Widget _topActions() {
+    return Row(
       children: [
-        if (!tvConnected)
-          _connectionBanner(),
-        _quickKeys(),
-        const SizedBox(height: 16),
-        SegmentedButton<int>(
-          segments: const [
-            ButtonSegment(value: 0, icon: Icon(Icons.gamepad_rounded), label: Text('Kumanda')),
-            ButtonSegment(value: 1, icon: Icon(Icons.touch_app_rounded), label: Text('Touchpad')),
-          ],
-          selected: {tvMode},
-          showSelectedIcon: false,
-          onSelectionChanged: (value) => setState(() => tvMode = value.first),
-        ),
-        const SizedBox(height: 18),
-        if (tvMode == 0) _remoteControls() else _touchpadControls(),
-        const SizedBox(height: 18),
-        _keyboardCard(),
+        Expanded(child: _actionTile(Icons.power_settings_new_rounded, 'Güç', () => key(26), danger: true)),
+        const SizedBox(width: 8),
+        Expanded(child: _actionTile(Icons.home_rounded, 'Ana Sayfa', () => key(3))),
+        const SizedBox(width: 8),
+        Expanded(child: _actionTile(Icons.arrow_back_rounded, 'Geri', () => key(4))),
+        const SizedBox(width: 8),
+        Expanded(child: _actionTile(Icons.mouse_rounded, 'Mouse', _openTouchpad, accent: true)),
       ],
     );
   }
 
-  Widget _connectionBanner() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primaryContainer.withOpacity(.35),
+  Widget _actionTile(IconData icon, String label, VoidCallback onTap, {bool accent = false, bool danger = false}) {
+    final color = danger
+        ? const Color(0xFFFF7373)
+        : accent
+            ? const Color(0xFFB7A9FF)
+            : Colors.white70;
+    return Material(
+      color: accent ? const Color(0xFF8B73FF).withOpacity(.14) : Colors.white.withOpacity(.045),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
         borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 24),
+              const SizedBox(height: 5),
+              Text(label, maxLines: 1, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dpad() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final max = constraints.maxHeight < constraints.maxWidth ? constraints.maxHeight : constraints.maxWidth;
+        final size = max.clamp(230.0, 292.0);
+        final keySize = size * .31;
+        final edge = size * .055;
+        return SizedBox(
+          width: size,
+          height: size,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF14161D),
+              border: Border.all(color: Colors.white.withOpacity(.055)),
+              boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 28, offset: Offset(0, 12))],
+            ),
+            child: Stack(
+              children: [
+                Positioned(top: edge, left: (size - keySize) / 2, child: _dirKey(Icons.keyboard_arrow_up_rounded, () => key(19), keySize)),
+                Positioned(bottom: edge, left: (size - keySize) / 2, child: _dirKey(Icons.keyboard_arrow_down_rounded, () => key(20), keySize)),
+                Positioned(left: edge, top: (size - keySize) / 2, child: _dirKey(Icons.keyboard_arrow_left_rounded, () => key(21), keySize)),
+                Positioned(right: edge, top: (size - keySize) / 2, child: _dirKey(Icons.keyboard_arrow_right_rounded, () => key(22), keySize)),
+                Positioned(
+                  left: size * .31,
+                  top: size * .31,
+                  child: Material(
+                    color: const Color(0xFF8B73FF),
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => key(23),
+                      child: SizedBox(
+                        width: size * .38,
+                        height: size * .38,
+                        child: const Center(child: Text('OK', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _dirKey(IconData icon, VoidCallback onTap, double size) {
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(width: size, height: size, child: Icon(icon, size: size * .52, color: Colors.white70)),
+      ),
+    );
+  }
+
+  Widget _rockerRow() {
+    return Row(
+      children: [
+        Expanded(child: _rocker('SES', Icons.volume_down_rounded, Icons.volume_up_rounded, () => key(25), () => key(24))),
+        const SizedBox(width: 10),
+        _smallRound(Icons.volume_off_rounded, () => key(164)),
+        const SizedBox(width: 10),
+        Expanded(child: _rocker('KANAL', Icons.remove_rounded, Icons.add_rounded, () => key(167), () => key(166))),
+      ],
+    );
+  }
+
+  Widget _rocker(String title, IconData minus, IconData plus, VoidCallback onMinus, VoidCallback onPlus) {
+    return Container(
+      height: 62,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(.045),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         children: [
-          const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.2)),
-          const SizedBox(width: 12),
-          Expanded(child: Text('$status\n${tvIp ?? ''}', style: const TextStyle(height: 1.35))),
-          IconButton(onPressed: _reconnectNow, icon: const Icon(Icons.refresh_rounded)),
+          Expanded(child: IconButton(onPressed: onMinus, icon: Icon(minus))),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 10, color: Colors.white46, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              const Icon(Icons.more_horiz_rounded, size: 17, color: Colors.white24),
+            ],
+          ),
+          Expanded(child: IconButton(onPressed: onPlus, icon: Icon(plus))),
         ],
       ),
+    );
+  }
+
+  Widget _smallRound(IconData icon, VoidCallback onTap) {
+    return SizedBox(
+      width: 58,
+      height: 58,
+      child: IconButton.filledTonal(onPressed: onTap, icon: Icon(icon)),
+    );
+  }
+
+  Widget _bottomActions() {
+    return Row(
+      children: [
+        Expanded(child: _wideButton(Icons.keyboard_rounded, 'Klavye', _showKeyboard)),
+        const SizedBox(width: 8),
+        Expanded(child: _wideButton(Icons.menu_rounded, 'Menü', () => key(82))),
+        const SizedBox(width: 8),
+        Expanded(child: _wideButton(Icons.play_arrow_rounded, 'Oynat', () => key(85))),
+      ],
+    );
+  }
+
+  Widget _wideButton(IconData icon, String label, VoidCallback onTap) {
+    return SizedBox(
+      height: 50,
+      child: FilledButton.tonalIcon(onPressed: onTap, icon: Icon(icon, size: 19), label: Text(label)),
     );
   }
 
@@ -504,36 +662,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
         Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFF15171D),
-            borderRadius: BorderRadius.circular(26),
-            border: Border.all(color: Colors.white.withOpacity(.06)),
-          ),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(.04), borderRadius: BorderRadius.circular(24)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.tv_rounded, size: 36),
-              const SizedBox(height: 14),
-              Text(status, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              Text(status, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
-              Text(
-                'TV ve telefon aynı Wi‑Fi’da olsun. İlk eşleştirmeden sonra uygulama TV’ye otomatik bağlanır.',
-                style: TextStyle(color: Colors.white.withOpacity(.58), height: 1.4),
-              ),
-              if (busy) const Padding(padding: EdgeInsets.only(top: 16), child: LinearProgressIndicator()),
-              const SizedBox(height: 10),
+              const Text('Telefon ve TV aynı Wi‑Fi ağında olsun.', style: TextStyle(color: Colors.white54)),
+              if (busy || scanning) ...[
+                const SizedBox(height: 14),
+                const LinearProgressIndicator(minHeight: 2),
+              ],
+              const SizedBox(height: 12),
               for (final tv in tvs)
-                Container(
-                  margin: const EdgeInsets.only(top: 8),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(.045), borderRadius: BorderRadius.circular(18)),
-                  child: ListTile(
-                    leading: const CircleAvatar(child: Icon(Icons.tv_rounded)),
-                    title: Text(tv.name),
-                    subtitle: Text(tv.host ?? ''),
-                    trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-                    onTap: () => connectIp(tv.host ?? ''),
-                  ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(child: Icon(Icons.tv_rounded)),
+                  title: Text(tv.name),
+                  subtitle: Text(tv.host ?? ''),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => connectIp(tv.host ?? ''),
                 ),
             ],
           ),
@@ -543,399 +692,344 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           controller: ipCtrl,
           keyboardType: TextInputType.number,
           decoration: InputDecoration(
-            labelText: 'TV IP adresi',
+            labelText: 'TV IP',
             hintText: '192.168.1.50',
-            suffixIcon: IconButton(icon: const Icon(Icons.arrow_forward_rounded), onPressed: () => connectIp(ipCtrl.text)),
+            filled: true,
+            fillColor: Colors.white.withOpacity(.04),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+            suffixIcon: IconButton(icon: const Icon(Icons.link_rounded), onPressed: () => connectIp(ipCtrl.text)),
           ),
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
-          onPressed: () {
-            setState(() {
-              scanning = true;
-              status = 'TV aranıyor…';
-            });
-            discovery.start();
+          onPressed: () async {
+            setState(() => scanning = true);
+            await discovery.start();
           },
-          icon: const Icon(Icons.radar_rounded),
-          label: const Text('TV’leri tekrar tara'),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Tekrar ara'),
         ),
       ],
-    );
-  }
-
-  Widget _quickKeys() {
-    return Row(
-      children: [
-        Expanded(child: _quickButton(Icons.power_settings_new_rounded, 'Güç', () => key(26), danger: true)),
-        const SizedBox(width: 8),
-        Expanded(child: _quickButton(Icons.home_rounded, 'Ana Sayfa', () => key(3))),
-        const SizedBox(width: 8),
-        Expanded(child: _quickButton(Icons.arrow_back_rounded, 'Geri', () => key(4))),
-        const SizedBox(width: 8),
-        Expanded(child: _quickButton(Icons.input_rounded, 'Kaynak', () => key(178))),
-      ],
-    );
-  }
-
-  Widget _quickButton(IconData icon, String label, VoidCallback action, {bool danger = false}) {
-    return Material(
-      color: danger ? const Color(0xFF3A181C) : const Color(0xFF17191F),
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: action,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
-          child: Column(
-            children: [
-              Icon(icon, size: 24, color: danger ? const Color(0xFFFF7E89) : null),
-              const SizedBox(height: 6),
-              Text(label, maxLines: 1, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _remoteControls() {
-    return Column(
-      children: [
-        _dpad(),
-        const SizedBox(height: 18),
-        Row(
-          children: [
-            Expanded(child: _rocker('SES', Icons.volume_up_rounded, Icons.volume_down_rounded, () => key(24), () => key(25))),
-            const SizedBox(width: 12),
-            Expanded(child: _rocker('KANAL', Icons.keyboard_arrow_up_rounded, Icons.keyboard_arrow_down_rounded, () => key(166), () => key(167))),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _wideButton(Icons.volume_off_rounded, 'Sessiz', () => key(164))),
-            const SizedBox(width: 10),
-            Expanded(child: _wideButton(Icons.menu_rounded, 'Menü', () => key(82))),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _mediaRow(),
-      ],
-    );
-  }
-
-  Widget _dpad() {
-    const size = 286.0;
-    const edge = 76.0;
-    const center = 92.0;
-    return Center(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF15171D),
-          border: Border.all(color: Colors.white.withOpacity(.07)),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(.28), blurRadius: 28, offset: const Offset(0, 14))],
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Positioned(top: 18, child: _circleKey(Icons.keyboard_arrow_up_rounded, () => key(19), edge)),
-            Positioned(bottom: 18, child: _circleKey(Icons.keyboard_arrow_down_rounded, () => key(20), edge)),
-            Positioned(left: 18, child: _circleKey(Icons.keyboard_arrow_left_rounded, () => key(21), edge)),
-            Positioned(right: 18, child: _circleKey(Icons.keyboard_arrow_right_rounded, () => key(22), edge)),
-            _circleKey(null, () => key(23), center, text: 'OK', primary: true),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _circleKey(IconData? icon, VoidCallback action, double size, {String? text, bool primary = false}) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Material(
-        color: primary ? Theme.of(context).colorScheme.primary : Colors.white.withOpacity(.055),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: action,
-          child: Center(
-            child: text != null
-                ? Text(text, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800))
-                : Icon(icon, size: size * .52),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _rocker(String title, IconData upIcon, IconData downIcon, VoidCallback up, VoidCallback down) {
-    return Container(
-      height: 138,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(color: const Color(0xFF15171D), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withOpacity(.06))),
-      child: Column(
-        children: [
-          Expanded(child: _rockerPart(upIcon, up)),
-          Text(title, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: Colors.white.withOpacity(.45))),
-          Expanded(child: _rockerPart(downIcon, down)),
-        ],
-      ),
-    );
-  }
-
-  Widget _rockerPart(IconData icon, VoidCallback action) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: action,
-        child: Center(child: Icon(icon, size: 30)),
-      ),
-    );
-  }
-
-  Widget _wideButton(IconData icon, String text, VoidCallback action) {
-    return Material(
-      color: const Color(0xFF17191F),
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: action,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon), const SizedBox(width: 8), Text(text, style: const TextStyle(fontWeight: FontWeight.w600))]),
-        ),
-      ),
-    );
-  }
-
-  Widget _mediaRow() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(color: const Color(0xFF15171D), borderRadius: BorderRadius.circular(22)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          IconButton(onPressed: () => key(88), icon: const Icon(Icons.fast_rewind_rounded)),
-          IconButton.filled(onPressed: () => key(85), icon: const Icon(Icons.play_arrow_rounded)),
-          IconButton(onPressed: () => key(87), icon: const Icon(Icons.fast_forward_rounded)),
-        ],
-      ),
-    );
-  }
-
-  Widget _touchpadControls() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          height: 330,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [const Color(0xFF1B1E27), Theme.of(context).colorScheme.primaryContainer.withOpacity(.35)],
-            ),
-            borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: Colors.white.withOpacity(.08)),
-          ),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => key(23),
-            onPanStart: (_) {
-              dragX = 0;
-              dragY = 0;
-            },
-            onPanUpdate: (details) {
-              dragX += details.delta.dx;
-              dragY += details.delta.dy;
-            },
-            onPanEnd: (_) => _sendSwipe(),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.touch_app_rounded, size: 44, color: Colors.white.withOpacity(.65)),
-                  const SizedBox(height: 12),
-                  const Text('Kaydır', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 5),
-                  Text('Dokun = OK  •  Uzun kaydır = birkaç adım', style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(.46))),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(child: _wideButton(Icons.arrow_back_rounded, 'Geri', () => key(4))),
-            const SizedBox(width: 10),
-            Expanded(child: _wideButton(Icons.home_rounded, 'Ana Sayfa', () => key(3))),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _wideButton(Icons.volume_down_rounded, 'Ses -', () => key(25))),
-            const SizedBox(width: 10),
-            Expanded(child: _wideButton(Icons.volume_up_rounded, 'Ses +', () => key(24))),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _keyboardCard() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: const Color(0xFF15171D), borderRadius: BorderRadius.circular(22)),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: textCtrl,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => sendText(),
-              decoration: const InputDecoration(hintText: 'TV’ye yaz…', prefixIcon: Icon(Icons.keyboard_rounded)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(width: 52, height: 52, child: IconButton.filled(onPressed: sendText, icon: const Icon(Icons.send_rounded))),
-        ],
-      ),
     );
   }
 
   Widget _acPage() {
-    final modeNames = ['Auto', 'Soğut', 'Kurut', 'Isıt', 'Fan'];
-    final modeIcons = [Icons.auto_awesome_rounded, Icons.ac_unit_rounded, Icons.water_drop_outlined, Icons.local_fire_department_rounded, Icons.air_rounded];
-
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         Container(
-          padding: const EdgeInsets.all(22),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [const Color(0xFF181B22), Theme.of(context).colorScheme.primaryContainer.withOpacity(.28)],
-            ),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: Colors.white.withOpacity(.07)),
+            borderRadius: BorderRadius.circular(28),
+            gradient: const LinearGradient(colors: [Color(0xFF171922), Color(0xFF111319)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            border: Border.all(color: Colors.white.withOpacity(.06)),
           ),
           child: Column(
             children: [
               Row(
                 children: [
-                  const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Baymak Klima', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)), SizedBox(height: 3), Text('IR kumanda', style: TextStyle(fontSize: 12, color: Colors.white54))])),
-                  SizedBox(
-                    width: 58,
-                    height: 58,
-                    child: IconButton.filled(
-                      style: IconButton.styleFrom(backgroundColor: acPower ? const Color(0xFF5A43D6) : Colors.white.withOpacity(.08)),
-                      onPressed: () => acChange(() => acPower = !acPower),
-                      icon: const Icon(Icons.power_settings_new_rounded),
-                    ),
+                  const Expanded(child: Text('Baymak', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800))),
+                  IconButton.filled(
+                    onPressed: () => acChange(() => acPower = !acPower),
+                    icon: Icon(acPower ? Icons.power_settings_new_rounded : Icons.power_off_rounded),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              Text('$temp°', style: const TextStyle(fontSize: 78, height: 1, fontWeight: FontWeight.w300, letterSpacing: -4)),
-              const SizedBox(height: 6),
-              Text(modeNames[mode], style: TextStyle(color: Colors.white.withOpacity(.55), fontWeight: FontWeight.w600)),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
+              Text('$temp°', style: const TextStyle(fontSize: 76, height: 1, fontWeight: FontWeight.w300)),
+              const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _tempButton(Icons.remove_rounded, () {
-                    if (temp > 16) acChange(() => temp--);
-                  }),
+                  _smallRound(Icons.remove_rounded, () { if (temp > 16) acChange(() => temp--); }),
                   const SizedBox(width: 28),
-                  _tempButton(Icons.add_rounded, () {
-                    if (temp < 30) acChange(() => temp++);
-                  }),
+                  _smallRound(Icons.add_rounded, () { if (temp < 30) acChange(() => temp++); }),
+                ],
+              ),
+              const SizedBox(height: 22),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                alignment: WrapAlignment.center,
+                children: [
+                  for (final item in const [(0, 'Auto'), (1, 'Soğut'), (2, 'Kurut'), (3, 'Isıt'), (4, 'Fan')])
+                    ChoiceChip(
+                      label: Text(item.$2),
+                      selected: mode == item.$1,
+                      onSelected: (_) => acChange(() => mode = item.$1),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.tonal(
+                      onPressed: () => acChange(() => fan = (fan + 1) % 4),
+                      child: Text(['Fan Auto', 'Fan Düşük', 'Fan Orta', 'Fan Yüksek'][fan]),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.tonal(
+                      onPressed: () => acChange(() => swing = !swing),
+                      child: Text(swing ? 'Swing Açık' : 'Swing Kapalı'),
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
         ),
-        const SizedBox(height: 18),
-        const Text('Mod', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 82,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: modeNames.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (_, index) {
-              final selected = mode == index;
-              return Material(
-                color: selected ? Theme.of(context).colorScheme.primary : const Color(0xFF17191F),
-                borderRadius: BorderRadius.circular(20),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => acChange(() => mode = index),
-                  child: SizedBox(
-                    width: 82,
-                    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(modeIcons[index], size: 25), const SizedBox(height: 7), Text(modeNames[index], style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600))]),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _acTile(
-                Icons.air_rounded,
-                ['Fan Auto', 'Fan Düşük', 'Fan Orta', 'Fan Yüksek'][fan],
-                () => acChange(() => fan = (fan + 1) % 4),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _acTile(
-                Icons.swap_vert_rounded,
-                swing ? 'Swing Açık' : 'Swing Kapalı',
-                () => acChange(() => swing = !swing),
-              ),
-            ),
-          ],
-        ),
       ],
     );
   }
+}
 
-  Widget _tempButton(IconData icon, VoidCallback action) {
-    return SizedBox(
-      width: 68,
-      height: 68,
-      child: IconButton.filledTonal(onPressed: action, icon: Icon(icon, size: 30)),
+class MouseHelperClient {
+  MouseHelperClient(this.ip);
+  final String ip;
+  Socket? socket;
+  bool connecting = false;
+
+  Future<bool> connect() async {
+    if (socket != null) return true;
+    if (connecting) return false;
+    connecting = true;
+    try {
+      socket = await Socket.connect(ip, 9090, timeout: const Duration(seconds: 2));
+      socket!.done.whenComplete(() => socket = null);
+      return true;
+    } catch (_) {
+      socket = null;
+      return false;
+    } finally {
+      connecting = false;
+    }
+  }
+
+  Future<void> send(String command) async {
+    if (socket == null && !await connect()) return;
+    try {
+      socket!.write('$command\n');
+    } catch (_) {
+      socket?.destroy();
+      socket = null;
+    }
+  }
+
+  void dispose() {
+    socket?.destroy();
+    socket = null;
+  }
+}
+
+class TouchpadPage extends StatefulWidget {
+  const TouchpadPage({
+    super.key,
+    required this.tvIp,
+    required this.sendKey,
+    required this.showKeyboard,
+  });
+
+  final String tvIp;
+  final void Function(int code) sendKey;
+  final Future<void> Function() showKeyboard;
+
+  @override
+  State<TouchpadPage> createState() => _TouchpadPageState();
+}
+
+class _TouchpadPageState extends State<TouchpadPage> {
+  late final MouseHelperClient helper;
+  final Map<int, Offset> pointers = {};
+  Offset totalMovement = Offset.zero;
+  DateTime? pointerDownAt;
+  bool helperOnline = false;
+  bool wasTwoFinger = false;
+  double scrollAccumulator = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    helper = MouseHelperClient(widget.tvIp);
+    _connect();
+  }
+
+  Future<void> _connect() async {
+    final ok = await helper.connect();
+    if (mounted) setState(() => helperOnline = ok);
+  }
+
+  @override
+  void dispose() {
+    helper.dispose();
+    super.dispose();
+  }
+
+  void _down(PointerDownEvent e) {
+    pointers[e.pointer] = e.position;
+    if (pointers.length == 1) {
+      totalMovement = Offset.zero;
+      pointerDownAt = DateTime.now();
+      wasTwoFinger = false;
+    } else if (pointers.length >= 2) {
+      wasTwoFinger = true;
+    }
+  }
+
+  void _move(PointerMoveEvent e) {
+    final old = pointers[e.pointer];
+    if (old == null) return;
+    final delta = e.position - old;
+    pointers[e.pointer] = e.position;
+
+    if (pointers.length == 1 && !wasTwoFinger) {
+      totalMovement += Offset(delta.dx.abs(), delta.dy.abs());
+      helper.send('MOVE ${(delta.dx * 2.1).round()} ${(delta.dy * 2.1).round()}');
+    } else if (pointers.length >= 2) {
+      scrollAccumulator += delta.dy;
+      if (scrollAccumulator.abs() >= 5) {
+        helper.send('SCROLL ${(scrollAccumulator * 4).round()}');
+        scrollAccumulator = 0;
+      }
+    }
+  }
+
+  void _up(PointerUpEvent e) {
+    pointers.remove(e.pointer);
+    if (pointers.isEmpty) {
+      final elapsed = pointerDownAt == null ? 9999 : DateTime.now().difference(pointerDownAt!).inMilliseconds;
+      final moved = totalMovement.dx + totalMovement.dy;
+      if (!wasTwoFinger && elapsed < 320 && moved < 14) {
+        HapticFeedback.lightImpact();
+        helper.send('CLICK');
+      }
+      totalMovement = Offset.zero;
+      scrollAccumulator = 0;
+      wasTwoFinger = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF08090D),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  IconButton.filledTonal(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.arrow_back_rounded)),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Mouse', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                        Text('Tam ekran touchpad', style: TextStyle(fontSize: 12, color: Colors.white46)),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(.05), borderRadius: BorderRadius.circular(50)),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(shape: BoxShape.circle, color: helperOnline ? const Color(0xFF63D49A) : const Color(0xFFFFB45E)),
+                        ),
+                        const SizedBox(width: 7),
+                        Text(helperOnline ? 'Mouse hazır' : 'Yardımcı bekleniyor', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Expanded(
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: _down,
+                  onPointerMove: _move,
+                  onPointerUp: _up,
+                  onPointerCancel: (e) {
+                    pointers.remove(e.pointer);
+                    if (pointers.isEmpty) {
+                      totalMovement = Offset.zero;
+                      wasTwoFinger = false;
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF171922), Color(0xFF0F1016)],
+                      ),
+                      borderRadius: BorderRadius.circular(32),
+                      border: Border.all(color: Colors.white.withOpacity(.065)),
+                      boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 26, offset: Offset(0, 12))],
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF8B73FF).withOpacity(.14),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.mouse_rounded, size: 31, color: Color(0xFFB7A9FF)),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text('Parmağını hareket ettir', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 9),
+                        const Text(
+                          '1 parmak  •  İmleç\nDokun  •  Tıkla\n2 parmak  •  Sayfayı kaydır',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(height: 1.75, color: Colors.white46, fontSize: 13),
+                        ),
+                        if (!helperOnline) ...[
+                          const SizedBox(height: 22),
+                          OutlinedButton.icon(
+                            onPressed: _connect,
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: const Text('Mouse yardımcısına bağlan'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(child: _padButton(Icons.arrow_back_rounded, 'Geri', () => widget.sendKey(4))),
+                  const SizedBox(width: 8),
+                  Expanded(child: _padButton(Icons.keyboard_rounded, 'Klavye', widget.showKeyboard)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _padButton(Icons.home_rounded, 'Ana Sayfa', () => widget.sendKey(3))),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
-  Widget _acTile(IconData icon, String text, VoidCallback action) {
-    return Material(
-      color: const Color(0xFF17191F),
-      borderRadius: BorderRadius.circular(22),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: action,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
-          child: Column(children: [Icon(icon, size: 28), const SizedBox(height: 9), Text(text, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))]),
-        ),
-      ),
+  Widget _padButton(IconData icon, String label, VoidCallback onTap) {
+    return SizedBox(
+      height: 54,
+      child: FilledButton.tonalIcon(onPressed: onTap, icon: Icon(icon, size: 19), label: Text(label)),
     );
   }
 }
