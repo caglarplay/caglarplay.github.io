@@ -1,7 +1,6 @@
 package com.caglarplay.bt_mouse_test
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHidDevice
@@ -24,6 +23,7 @@ class MainActivity : FlutterActivity() {
     private var hid: BluetoothHidDevice? = null
     private var connectedDevice: BluetoothDevice? = null
     private var hidRegistered = false
+    private var originalBtName: String? = null
 
     private val descriptor: ByteArray = intArrayOf(
         0x05,0x01, 0x09,0x02, 0xA1,0x01, 0x09,0x01, 0xA1,0x00,
@@ -39,10 +39,7 @@ class MainActivity : FlutterActivity() {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "startHid" -> result.success(startHid())
-                "discoverable" -> {
-                    makeDiscoverable()
-                    result.success(true)
-                }
+                "discoverable" -> result.success(makeDiscoverable())
                 "bondedDevices" -> result.success(bondedDevices())
                 "connect" -> {
                     val address = call.argument<String>("address") ?: ""
@@ -83,7 +80,7 @@ class MainActivity : FlutterActivity() {
             requestBtPermissions()
             return "Bluetooth izinlerini ver, sonra HID Başlat’a tekrar bas"
         }
-        if (hidRegistered) return "HID hazır"
+        if (hidRegistered) return "HID hazır - şimdi Görünür Yap"
         val ok = adapter.getProfileProxy(this, profileListener, BluetoothProfile.HID_DEVICE)
         return if (ok) "HID servisi hazırlanıyor…" else "HID servisi açılamadı"
     }
@@ -114,7 +111,14 @@ class MainActivity : FlutterActivity() {
     private val hidCallback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             hidRegistered = registered
-            sendStatus(if (registered) "HID hazır - TV ile eşleştir" else "HID kaydı kapandı", registered, connectedDevice != null)
+            if (registered && pluggedDevice != null) {
+                try { hid?.connect(pluggedDevice) } catch (_: Exception) {}
+            }
+            sendStatus(
+                if (registered) "HID hazır - Görünür Yap, sonra TV'de Kumanda Mouse'u seç" else "HID kaydı kapandı",
+                registered,
+                connectedDevice != null
+            )
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
@@ -130,15 +134,22 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun makeDiscoverable() {
+    private fun makeDiscoverable(): String {
         if (!hasPermissions()) {
             requestBtPermissions()
-            return
+            return "Bluetooth izinlerini ver"
         }
+        if (!hidRegistered) return "Önce HID Başlat"
+        try {
+            if (originalBtName == null) originalBtName = adapter?.name
+            adapter?.name = "Kumanda Mouse"
+        } catch (_: Exception) {}
         val intent = Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
             putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
         }
         startActivity(intent)
+        sendStatus("TV'de Kumanda Mouse'u seç", true, false)
+        return "TV'de Kumanda Mouse'u seç"
     }
 
     private fun bondedDevices(): List<Map<String, String>> {
@@ -177,6 +188,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        try {
+            if (hasPermissions() && originalBtName != null) adapter?.name = originalBtName
+        } catch (_: Exception) {}
         try { if (hasPermissions()) hid?.unregisterApp() } catch (_: Exception) {}
         try { hid?.let { adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, it) } } catch (_: Exception) {}
         super.onDestroy()
