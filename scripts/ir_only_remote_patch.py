@@ -6,7 +6,7 @@ path = Path(sys.argv[1] if len(sys.argv) > 1 else 'remote_build/lib/main.dart')
 s = path.read_text()
 
 # Route every TV key through the phone IR blaster, never through Wi-Fi.
-pattern = re.compile(r"  void key\(int code\) \{.*?\n  \}\n\n  Future<void> _tvPowerIr\(\) async \{.*?\n  \}\n\n", re.S)
+pattern = re.compile(r"  void key\(int code\) \{.*?\n  \}\n\n  int\? _keyForChar", re.S)
 replacement = '''  void key(int code) {
     HapticFeedback.selectionClick();
     ir.invokeMethod<bool>('sendTvKey', {'keyCode': code}).then((ok) {
@@ -17,7 +17,7 @@ replacement = '''  void key(int code) {
     });
   }
 
-'''
+  int? _keyForChar'''
 s, count = pattern.subn(replacement, s, count=1)
 if count != 1:
     raise SystemExit(f'key patch target not found: {count}')
