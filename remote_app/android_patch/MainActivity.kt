@@ -22,11 +22,26 @@ class MainActivity: FlutterActivity() {
                         return@setMethodCallHandler
                     }
                     try {
-                        // Vestel RC5118 family: RC5, TV1 address 1, power command 0x0C.
-                        val pattern = rc5Pattern(address = 1, command = 0x0C, toggle = rc5Toggle)
-                        ir.transmit(36000, pattern)
-                        rc5Toggle = !rc5Toggle
+                        sendVestel(ir, 0x0C)
                         result.success(true)
+                    } catch (e: Exception) {
+                        result.error("IR_TV", e.message, null)
+                    }
+                }
+                "sendTvKey" -> {
+                    if (ir?.hasIrEmitter() != true) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val keyCode = call.argument<Int>("keyCode") ?: -1
+                        val command = vestelCommandForAndroidKey(keyCode)
+                        if (command == null) {
+                            result.success(false)
+                        } else {
+                            sendVestel(ir, command)
+                            result.success(true)
+                        }
                     } catch (e: Exception) {
                         result.error("IR_TV", e.message, null)
                     }
@@ -49,12 +64,44 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    private fun sendVestel(ir: ConsumerIrManager, command: Int) {
+        // Vestel / RC5118 family uses RC5 TV address 1. The command set below
+        // follows the common Vestel Smart Center / RC5 command numbering.
+        val pattern = rc5Pattern(address = 1, command = command, toggle = rc5Toggle)
+        ir.transmit(36000, pattern)
+        rc5Toggle = !rc5Toggle
+    }
+
+    private fun vestelCommandForAndroidKey(keyCode: Int): Int? = when (keyCode) {
+        26 -> 0x0C   // Power
+        178 -> 0x38  // Source
+        284 -> 0x2E  // Apps
+        172 -> 0x2F  // Guide / EPG
+        174 -> 0x28  // Favorites
+        19 -> 0x14   // D-pad Up
+        20 -> 0x13   // D-pad Down
+        21 -> 0x15   // D-pad Left
+        22 -> 0x16   // D-pad Right
+        23 -> 0x35   // OK
+        82 -> 0x30   // Menu
+        3 -> 0x3F    // Home / Main screen
+        4 -> 0x0A    // Back
+        24 -> 0x10   // Volume +
+        25 -> 0x11   // Volume -
+        164 -> 0x0D  // Mute
+        166 -> 0x20  // Channel +
+        167 -> 0x21  // Channel -
+        85 -> 0x19   // Play
+        86 -> 0x18   // Stop
+        18 -> 0x12   // Info
+        else -> null
+    }
+
     private fun rc5Pattern(address: Int, command: Int, toggle: Boolean): IntArray {
         // RC5: 36 kHz, Manchester coding, 889 us per half bit.
-        // Logic 1 = space,mark. Logic 0 = mark,space.
         val bits = ArrayList<Int>(14)
-        bits.add(1) // start
-        bits.add(if (command < 64) 1 else 0) // field bit
+        bits.add(1)
+        bits.add(if (command < 64) 1 else 0)
         bits.add(if (toggle) 1 else 0)
         for (i in 4 downTo 0) bits.add((address shr i) and 1)
         val cmd = command and 0x3F
@@ -63,15 +110,14 @@ class MainActivity: FlutterActivity() {
         val halves = ArrayList<Boolean>(bits.size * 2)
         for (bit in bits) {
             if (bit == 1) {
-                halves.add(false) // space
-                halves.add(true)  // mark
+                halves.add(false)
+                halves.add(true)
             } else {
-                halves.add(true)  // mark
-                halves.add(false) // space
+                halves.add(true)
+                halves.add(false)
             }
         }
 
-        // ConsumerIrManager pattern must begin with a mark. Leading idle space is implicit.
         while (halves.isNotEmpty() && !halves[0]) halves.removeAt(0)
         if (halves.isEmpty()) return intArrayOf(889, 889)
 
@@ -88,7 +134,7 @@ class MainActivity: FlutterActivity() {
             }
         }
         out.add(count * 889)
-        if (out.size % 2 == 1) out.add(889) // finish with a space
+        if (out.size % 2 == 1) out.add(889)
         return out.toIntArray()
     }
 
