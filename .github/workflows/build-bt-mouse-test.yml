@@ -1,0 +1,45 @@
+name: Build Bluetooth Mouse Test
+
+on:
+  push:
+    branches: [tv-klima-kumanda]
+    paths:
+      - 'bt_mouse_test/**'
+      - '.github/workflows/build-bt-mouse-test.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create app shell
+        run: |
+          flutter create --platforms=android --org com.caglarplay --project-name bt_mouse_test bt_mouse_build
+          rm -rf bt_mouse_build/lib
+          cp -r bt_mouse_test/lib bt_mouse_build/lib
+          cp bt_mouse_test/pubspec.yaml bt_mouse_build/pubspec.yaml
+          cp bt_mouse_test/android_patch/MainActivity.kt bt_mouse_build/android/app/src/main/kotlin/com/caglarplay/bt_mouse_test/MainActivity.kt
+          cp bt_mouse_test/android_patch/AndroidManifest.xml bt_mouse_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Build APK
+        working-directory: bt_mouse_build
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp bt_mouse_build/build/app/outputs/flutter-apk/app-release.apk out/Bluetooth-Mouse-Test.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bluetooth-Mouse-Test
+          path: out/Bluetooth-Mouse-Test.apk
+          retention-days: 14
