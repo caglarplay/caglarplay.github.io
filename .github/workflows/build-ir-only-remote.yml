@@ -1,0 +1,57 @@
+name: Build IR Only Kumanda
+
+on:
+  push:
+    branches: [tv-klima-kumanda]
+    paths:
+      - 'remote_app/**'
+      - 'scripts/modern_remote_patch.py'
+      - 'scripts/ir_only_remote_patch.py'
+      - '.github/workflows/build-ir-only-remote.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create app shell
+        run: |
+          flutter create --platforms=android --org com.example --project-name remote_app remote_build
+          rm -rf remote_build/lib
+          cp -r remote_app/lib remote_build/lib
+          cp remote_app/pubspec.yaml remote_build/pubspec.yaml
+          sed -i 's/Colors.white46/Color(0x75FFFFFF)/g' remote_build/lib/main.dart
+          python3 scripts/modern_remote_patch.py remote_build/lib/main.dart
+          sed -i 's/Colors.white78/Color(0xC7FFFFFF)/g; s/Colors.white88/Color(0xE0FFFFFF)/g' remote_build/lib/main.dart
+          python3 scripts/ir_only_remote_patch.py remote_build/lib/main.dart
+          cp remote_app/android_patch/MainActivity.kt remote_build/android/app/src/main/kotlin/com/example/remote_app/MainActivity.kt
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('remote_build/android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          marker='<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          perms='''<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.TRANSMIT_IR"/>\n    <uses-feature android:name="android.hardware.consumerir" android:required="true"/>'''
+          p.write_text(s.replace(marker, perms))
+          PY
+
+      - name: Build APK
+        working-directory: remote_build
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Collect APK
+        run: |
+          cp remote_build/build/app/outputs/flutter-apk/app-release.apk Kumanda-Tam-IR.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kumanda-Tam-IR
+          path: Kumanda-Tam-IR.apk
+          retention-days: 14
